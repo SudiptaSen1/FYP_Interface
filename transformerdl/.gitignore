@@ -1,5 +1,5 @@
 .env
 venv
-/bangla_bert_model
 __pycache__
-/bert_english_model
+bangla_bert_model
+bert_english_model
