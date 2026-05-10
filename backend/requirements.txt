@@ -6,4 +6,4 @@ joblib
 pydantic
 scikit-learn
 motor
-dotenv
+python-dotenv
