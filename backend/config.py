@@ -13,7 +13,7 @@ MONGO_DETAILS = os.getenv("MONGO_URI") or "mongodb://localhost:27017"
 
 ENG_MAX_LEN = 320
 BEN_MAX_LEN = 128
-BEN_LABEL_MAP = {0: "Normal", 1: "Normal", 2: "Depression"}
+BEN_LABEL_MAP = {0: "Normal", 1: "Depression", 2: "Anxiety"}
 
 # --- Authentication Config ---
 SECRET_KEY = os.getenv("SECRET_KEY")
