@@ -7,34 +7,47 @@ from pydantic import BaseModel
 from transformers import BertTokenizer, BertForSequenceClassification
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
-
-# --- Fixed Import ---
-from datetime import datetime, timezone 
+from datetime import datetime, timezone
 from motor.motor_asyncio import AsyncIOMotorClient
+from typing import Optional
 
+# ==========================================
+# 1. ENVIRONMENT CONFIGURATION
+# ==========================================
 load_dotenv()
 
-# --- Configuration ---
-ENG_MODEL_PATH = "./bert_english_model"
-BEN_MODEL_PATH = "./bangla_bert_model"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-MONGO_DETAILS = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+ENG_MODEL_PATH = os.path.join(BASE_DIR, "bert_english_model")
+BEN_MODEL_PATH = os.path.join(BASE_DIR, "bangla_bert_model")
+
+# If MONGO_URI is empty or missing, fallback to localhost
+MONGO_DETAILS = os.getenv("MONGO_URI") or "mongodb://localhost:27017"
 
 ENG_MAX_LEN = 320
 BEN_MAX_LEN = 128
-
 BEN_LABEL_MAP = {0: "Normal", 1: "Normal", 2: "Depression"}
 
+# Global dictionary to store models and DB connection
 model_assets = {}
 
+# ==========================================
+# 2. LIFESPAN (STARTUP & SHUTDOWN)
+# ==========================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Initializing system and loading models...")
     
     # --- Connect to MongoDB ---
-    model_assets["mongo_client"] = AsyncIOMotorClient(MONGO_DETAILS)
-    model_assets["db"] = model_assets["mongo_client"]["fyp_database"]
-    print("Connected to MongoDB!")
+    try:
+        model_assets["mongo_client"] = AsyncIOMotorClient(MONGO_DETAILS)
+        model_assets["db"] = model_assets["mongo_client"]["fyp_database"]
+        # Trigger a quick command to verify connection
+        await model_assets["mongo_client"].admin.command('ping')
+        print(f"Connected to MongoDB at {MONGO_DETAILS}")
+    except Exception as e:
+        print(f"Failed to connect to MongoDB: {e}")
+        raise e
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model_assets["device"] = device
@@ -57,12 +70,17 @@ async def lifespan(app: FastAPI):
         raise e
     
     yield
+    
+    # --- Shutdown Cleanup ---
     model_assets["mongo_client"].close()
     model_assets.clear()
+    print("System shut down securely.")
 
 app = FastAPI(title="Multilingual Text Analysis API", lifespan=lifespan)
 
-# --- Data Models ---
+# ==========================================
+# 3. DATA MODELS (SCHEMAS)
+# ==========================================
 class TextRequest(BaseModel):
     statement: str
 
@@ -71,7 +89,16 @@ class AnalysisResponse(BaseModel):
     prediction: str
     confidence: float
 
-# --- Helper Functions ---
+class FeedbackRequest(BaseModel):
+    statement: str
+    language: str
+    original_prediction: str
+    feedback_type: str # 'upvote' or 'downvote'
+    corrected_prediction: Optional[str] = None # Optional correction
+
+# ==========================================
+# 4. HELPER FUNCTIONS
+# ==========================================
 def is_bengali(text: str) -> bool:
     return bool(re.search(r'[\u0980-\u09FF]', text))
 
@@ -89,40 +116,33 @@ def clean_bengali_text(text: str) -> str:
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
-# --- API Endpoints ---
+# ==========================================
+# 5. API ENDPOINTS
+# ==========================================
 @app.post("/analyze", response_model=AnalysisResponse)
 async def analyze_text(request: TextRequest):
+    """Predicts sentiment/mental health status without saving to DB."""
     if not request.statement.strip():
         raise HTTPException(status_code=400, detail="Empty statement provided")
 
     try:
         lang = "Bengali" if is_bengali(request.statement) else "English"
-        
-        # --- FIX: Grab device and db from global state ---
         device = model_assets["device"]
-        db = model_assets["db"] 
         
         if lang == "English":
             clean_text = clean_english_text(request.statement)
             tokenizer = model_assets["eng_tok"]
             model = model_assets["eng_mod"]
             max_len = ENG_MAX_LEN
-            collection_name = "english_predictions" # --- FIX: Set collection name
-            
         else:
             clean_text = clean_bengali_text(request.statement)
             tokenizer = model_assets["ben_tok"]
             model = model_assets["ben_mod"]
             max_len = BEN_MAX_LEN
-            collection_name = "bengali_predictions" # --- FIX: Set collection name
             
         inputs = tokenizer(
-            clean_text,
-            add_special_tokens=True,
-            max_length=max_len,
-            padding='max_length',
-            truncation=True,
-            return_tensors='pt'
+            clean_text, add_special_tokens=True, max_length=max_len,
+            padding='max_length', truncation=True, return_tensors='pt'
         ).to(device)
         
         with torch.no_grad():
@@ -137,16 +157,6 @@ async def analyze_text(request: TextRequest):
         else:
             label = BEN_LABEL_MAP.get(idx, "Unknown")
             
-        document = {
-            "statement": request.statement,
-            "prediction": label,
-            "confidence": round(float(conf.item()), 4),
-            "timestamp": datetime.now(timezone.utc)
-        }
-        
-        # --- FIX: Insert into the correct dynamic collection ---
-        await db[collection_name].insert_one(document)
-            
         return AnalysisResponse(
             detected_language=lang,
             prediction=label,
@@ -156,6 +166,49 @@ async def analyze_text(request: TextRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/feedback")
+async def submit_feedback(request: FeedbackRequest):
+    """Handles user feedback to improve the model dataset."""
+    try:
+        db = model_assets["db"]
+        
+        if request.language.lower() == "english":
+            collection_name = "english_predictions"
+        elif request.language.lower() == "bengali":
+            collection_name = "bengali_predictions"
+        else:
+            raise HTTPException(status_code=400, detail="Invalid language specified.")
+            
+        if request.feedback_type.lower() == "upvote":
+            # Upvote: Save exactly what the model guessed
+            document = {
+                "statement": request.statement,
+                "prediction": request.original_prediction,
+                "is_user_corrected": False,
+                "timestamp": datetime.now(timezone.utc)
+            }
+        elif request.feedback_type.lower() == "downvote":
+            # Downvote: Only save if a correction was actually provided
+            if request.corrected_prediction and request.corrected_prediction.strip():
+                document = {
+                    "statement": request.statement,
+                    "prediction": request.corrected_prediction.strip(),
+                    "is_user_corrected": True,
+                    "timestamp": datetime.now(timezone.utc)
+                }
+            else:
+                return {"status": "ignored", "message": "Downvote received but no correction provided. Discarded."}
+        else:
+            raise HTTPException(status_code=400, detail="feedback_type must be 'upvote' or 'downvote'")
+
+        # Insert the validated document into MongoDB
+        await db[collection_name].insert_one(document)
+        
+        return {"status": "success", "message": "Feedback recorded successfully."}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/")
 async def root():
-    return {"message": "Multilingual API is live. Send a POST request to /analyze."}
+    return {"message": "Multilingual API is live. Use /analyze to predict, and /feedback to correct."}
