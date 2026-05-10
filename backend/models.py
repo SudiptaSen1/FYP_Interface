@@ -30,3 +30,13 @@ class Token(BaseModel):
     access_token: str
     token_type: str
     name: str
+    
+# ... (existing models)
+
+class ChatMessage(BaseModel):
+    role: str  # Must be "user" or "model"
+    content: str
+
+class ChatRequest(BaseModel):
+    message: str
+    history: list[ChatMessage] = []  # Defaults to an empty list for the first message

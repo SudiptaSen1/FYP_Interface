@@ -2,7 +2,14 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, ThumbsUp, ThumbsDown, Send, CheckCircle } from "lucide-react";
+import {
+  Loader2,
+  ThumbsUp,
+  ThumbsDown,
+  Send,
+  CheckCircle,
+  Bot,
+} from "lucide-react";
 
 type AnalysisResult = {
   detected_language: string;
@@ -106,7 +113,7 @@ export default function AnalyzePage() {
   // --- Render UI ---
   return (
     <main className="min-h-[calc(100vh-4rem)] bg-gray-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 md:p-8 border border-gray-100">
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 md:p-8 border border-gray-100 mt-8 mb-8">
         {/* Header */}
         <div className="mb-8 text-center">
           <h1 className="text-2xl font-bold text-gray-800">
@@ -182,7 +189,32 @@ export default function AnalyzePage() {
               </span>
             </div>
 
-            {/* Feedback Section */}
+            {/* --- MINDFLOW CHAT TRIGGER (UPDATED FIX) --- */}
+            {result.prediction.toLowerCase() !== "normal" && (
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-xl border border-indigo-100 text-center mb-6 animate-in fade-in zoom-in duration-500">
+                <h3 className="text-lg font-semibold text-indigo-900 mb-2">
+                  You don't have to face this alone.
+                </h3>
+                <p className="text-sm text-indigo-700/80 mb-4">
+                  MindFlow is a safe, AI-powered space where you can talk about
+                  how you're feeling right now.
+                </p>
+                <button
+                  // --- CHANGE IS HERE: Pass the prediction as a URL parameter ---
+                  onClick={() =>
+                    router.push(
+                      `/chat?prediction=${encodeURIComponent(result.prediction)}`,
+                    )
+                  }
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 px-6 rounded-full transition-all shadow-md hover:shadow-lg flex items-center gap-2 mx-auto"
+                >
+                  <Bot className="w-4 h-4" />
+                  Talk to MindFlow
+                </button>
+              </div>
+            )}
+
+            {/* --- FEEDBACK SECTION --- */}
             <div className="border-t border-gray-100 pt-6">
               {feedbackState === "submitted" ? (
                 <div className="flex items-center justify-center gap-2 text-green-600 bg-green-50 p-3 rounded-xl">
@@ -234,7 +266,7 @@ export default function AnalyzePage() {
                       <button
                         onClick={() => handleFeedback("downvote")}
                         disabled={isSubmittingFeedback}
-                        className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                        className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {isSubmittingFeedback ? "Submitting..." : "Submit"}
                       </button>

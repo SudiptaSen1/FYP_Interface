@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from models import TextRequest, AnalysisResponse, FeedbackRequest
 import controllers
 from models import UserCreate, UserLogin, Token
+from models import UserCreate, UserLogin, Token, TextRequest, AnalysisResponse, FeedbackRequest, ChatRequest
 
 router = APIRouter()
 
@@ -47,3 +48,14 @@ async def logout():
     from local storage. This endpoint acts as a confirmation signal.
     """
     return {"message": "Successfully logged out. Please clear your local token."}
+
+@router.post("/chat")
+async def chat_with_mindflow(request: ChatRequest):
+    """Endpoint for the Gemini AI chat session."""
+    try:
+        result = await controllers.process_chat(request)
+        return result
+    except ValueError as ve:
+        raise HTTPException(status_code=503, detail=str(ve)) # 503 Service Unavailable
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

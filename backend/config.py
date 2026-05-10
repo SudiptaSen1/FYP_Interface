@@ -23,5 +23,10 @@ if not SECRET_KEY:
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 days
 
+# --- Gemini Config ---
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    print("WARNING: GEMINI_API_KEY is not set in the .env file.")
+
 # Global dictionary to store models and DB connection across the app
 model_assets = {}

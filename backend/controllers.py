@@ -9,6 +9,23 @@ import jwt
 from datetime import timedelta
 from fastapi import HTTPException
 from config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
+import google.generativeai as genai
+from config import GEMINI_API_KEY
+
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    
+# Define the AI's personality and safety boundaries
+SYSTEM_INSTRUCTION = """
+You are MindFlow, a highly compassionate, empathetic, and supportive mental health AI assistant.
+Your goal is to provide a safe space for users to chat, offer healthy coping mechanisms, and provide a listening ear.
+
+CRITICAL RULES:
+1. You are NOT a licensed medical professional, therapist, or psychiatrist. You cannot diagnose conditions or prescribe medication.
+2. If a user asks for medical advice, gently remind them of your AI nature and suggest speaking to a professional.
+3. If the user indicates severe depression, self-harm, or suicidal thoughts, you MUST immediately express deep concern and strongly advise them to consult a doctor, call an emergency hotline, or reach out to a trusted loved one. 
+4. Keep your responses conversational, concise, and warm. Avoid sounding like a textbook.
+"""
 
 # Set up the password hasher
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -178,3 +195,46 @@ async def authenticate_user(login_data):
         "token_type": "bearer",
         "name": user["name"]
     }
+    
+# --- Add this new Chat Controller at the bottom ---
+async def process_chat(chat_data):
+    """Handles the conversation with Gemini."""
+    if not GEMINI_API_KEY:
+        raise ValueError("Gemini API key is not configured on the server.")
+
+    # Initialize the model with our specific instructions
+    chat_model = genai.GenerativeModel(
+        model_name="gemini-3-flash-preview", 
+        system_instruction=SYSTEM_INSTRUCTION
+    )
+
+    formatted_history = []
+    
+    # THE FIX: Gemini requires the history to START with a 'user' message. 
+    # If the frontend passes the MindFlow greeting first ('model'), 
+    # we prepend a hidden user message to satisfy Gemini's strict rules.
+    if chat_data.history and chat_data.history[0].role == "model":
+        formatted_history.append({
+            "role": "user",
+            "parts": ["Hello, I need someone to talk to."]
+        })
+
+    # Convert our Pydantic history format into the format Gemini expects
+    for msg in chat_data.history:
+        formatted_history.append({
+            "role": msg.role,
+            "parts": [msg.content]
+        })
+
+    try:
+        # Start the chat session with the valid history
+        chat_session = chat_model.start_chat(history=formatted_history)
+        
+        # Send the new message
+        response = chat_session.send_message(chat_data.message)
+        
+        return {"reply": response.text}
+    except Exception as e:
+        # Print the actual error to your terminal so we can see it if it fails again!
+        print(f"GEMINI ERROR: {str(e)}") 
+        raise Exception(f"Failed to communicate with Gemini: {str(e)}")
