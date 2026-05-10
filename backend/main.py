@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timezone
 from motor.motor_asyncio import AsyncIOMotorClient
 from typing import Optional
+from fastapi.middleware.cors import CORSMiddleware
 
 # ==========================================
 # 1. ENVIRONMENT CONFIGURATION
@@ -77,6 +78,15 @@ async def lifespan(app: FastAPI):
     print("System shut down securely.")
 
 app = FastAPI(title="Multilingual Text Analysis API", lifespan=lifespan)
+
+# Add this to allow the Next.js frontend to communicate with FastAPI
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"], # Specifically allow your Next.js port
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ==========================================
 # 3. DATA MODELS (SCHEMAS)
@@ -172,6 +182,7 @@ async def submit_feedback(request: FeedbackRequest):
     try:
         db = model_assets["db"]
         
+        # --- Separate Collections by Language ---
         if request.language.lower() == "english":
             collection_name = "english_predictions"
         elif request.language.lower() == "bengali":
@@ -179,29 +190,37 @@ async def submit_feedback(request: FeedbackRequest):
         else:
             raise HTTPException(status_code=400, detail="Invalid language specified.")
             
+        # --- Handle Upvotes ---
         if request.feedback_type.lower() == "upvote":
-            # Upvote: Save exactly what the model guessed
             document = {
                 "statement": request.statement,
                 "prediction": request.original_prediction,
+                "feedback_type": "upvote",
                 "is_user_corrected": False,
                 "timestamp": datetime.now(timezone.utc)
             }
+            
+        # --- Handle Downvotes ---
         elif request.feedback_type.lower() == "downvote":
-            # Downvote: Only save if a correction was actually provided
-            if request.corrected_prediction and request.corrected_prediction.strip():
-                document = {
-                    "statement": request.statement,
-                    "prediction": request.corrected_prediction.strip(),
-                    "is_user_corrected": True,
-                    "timestamp": datetime.now(timezone.utc)
-                }
-            else:
-                return {"status": "ignored", "message": "Downvote received but no correction provided. Discarded."}
+            # Check if they actually provided text
+            has_correction = bool(request.corrected_prediction and request.corrected_prediction.strip())
+            
+            document = {
+                "statement": request.statement,
+                "original_prediction": request.original_prediction,
+                "feedback_type": "downvote",
+                "is_user_corrected": has_correction,
+                "timestamp": datetime.now(timezone.utc)
+            }
+            
+            # Only add the corrected_prediction field if they typed something
+            if has_correction:
+                document["corrected_prediction"] = request.corrected_prediction.strip()
+                
         else:
             raise HTTPException(status_code=400, detail="feedback_type must be 'upvote' or 'downvote'")
 
-        # Insert the validated document into MongoDB
+        # --- Insert into the correct collection ---
         await db[collection_name].insert_one(document)
         
         return {"status": "success", "message": "Feedback recorded successfully."}
